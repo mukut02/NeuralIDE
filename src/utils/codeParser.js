@@ -19,6 +19,9 @@ export function parseCodeToArchitecture(code, currentDatasets = {}, layerLibrary
       result.datasetName = "Fashion-MNIST";
     } else if (/datasets\.MNIST/i.test(code) || /MNIST/i.test(code)) {
       result.datasetName = "MNIST";
+    } else {
+      const match = Object.keys(currentDatasets).find((dName) => new RegExp(dName, "i").test(code));
+      if (match) result.datasetName = match;
     }
 
     // 2. Parse Training Hyperparameters

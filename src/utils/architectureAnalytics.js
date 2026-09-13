@@ -168,7 +168,7 @@ export function generateInputPattern(datasetName, classIdx = 0, gridDim = 16, ch
 
     for (let x = 0; x < gridDim; x++) {
       const nx = (x - cx) / (gridDim / 2); // -1.0 to 1.0
-      let val = 0.05;
+      let val;
 
       if (datasetName === "MNIST") {
         switch (classIdx) {
@@ -434,7 +434,6 @@ export function generateSyntheticFeatureMaps(stepIndex, totalSteps, shape, datas
   if (shape.kind === "vector") {
     const isFinal = stepIndex === totalSteps;
     const size = Math.min(shape.n, numClasses);
-    const logits = [];
 
     // Target class receives top-1 probability; other classes receive realistic lower distribution
     if (isFinal) {

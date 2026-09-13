@@ -66,15 +66,6 @@ const LAYER_GROUPS = Object.entries(LAYER_LIBRARY).reduce(
   {},
 );
 
-const INITIAL_LAYERS = [
-  { id: 1, type: "Conv2d", params: { filters: 32, kernel: 3, padding: 1, stride: 1 } },
-  { id: 2, type: "ReLU", params: {} },
-  { id: 3, type: "MaxPool2d", params: { kernel: 2 } },
-  { id: 4, type: "Flatten", params: {} },
-  { id: 5, type: "Linear", params: { units: 128 } },
-  { id: 6, type: "ReLU", params: {} },
-  { id: 7, type: "Linear", params: { units: 10 } },
-];
 
 const isActivation = (type) => ["ReLU", "LeakyReLU", "GELU", "SiLU", "ELU", "SELU", "Tanh", "Sigmoid", "Softplus", "Softmax", "LogSoftmax"].includes(type);
 const NORM_2D_TYPES = ["BatchNorm", "InstanceNorm", "GroupNorm"];
@@ -375,7 +366,11 @@ function App() {
       e.preventDefault();
       setSidebarWidth((prev) => {
         const next = Math.max(220, prev - 10);
-        try { localStorage.setItem("neuralide_sidebar_width", String(next)); } catch {}
+        try {
+          localStorage.setItem("neuralide_sidebar_width", String(next));
+        } catch {
+          // ignore
+        }
         return next;
       });
     } else if (e.key === "ArrowRight") {
@@ -383,7 +378,11 @@ function App() {
       setSidebarWidth((prev) => {
         const maxW = Math.min(550, Math.max(260, window.innerWidth - 450));
         const next = Math.min(maxW, prev + 10);
-        try { localStorage.setItem("neuralide_sidebar_width", String(next)); } catch {}
+        try {
+          localStorage.setItem("neuralide_sidebar_width", String(next));
+        } catch {
+          // ignore
+        }
         return next;
       });
     } else if (e.key === "Home" || e.key === "Enter" || e.key === " ") {

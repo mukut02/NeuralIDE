@@ -83,13 +83,13 @@ export default function PaperDiagram({
     if (dataset?.name === "MNIST") return 7; // Digit 7
     return 0; // T-shirt / top
   });
-  const svgRef = useRef(null);
-
-  // Sync selectedClass default if dataset changes
-  useEffect(() => {
+  const [prevDatasetName, setPrevDatasetName] = useState(dataset?.name);
+  if (dataset?.name !== prevDatasetName) {
+    setPrevDatasetName(dataset?.name);
     const defaultIdx = dataset?.name === "CIFAR-10" ? 3 : dataset?.name === "MNIST" ? 7 : 0;
     setSelectedClass(defaultIdx);
-  }, [dataset?.name]);
+  }
+  const svgRef = useRef(null);
 
   const totalSteps = architecture.length;
 
