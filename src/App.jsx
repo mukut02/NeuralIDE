@@ -392,6 +392,57 @@ function App() {
     }
   };
 
+  // Layer Inspector Synchronous Scroll Controller
+  const inspectorRef = useRef(null);
+  const isSyncingFromWindow = useRef(false);
+  const isUserScrollingInspector = useRef(false);
+  const inspectorScrollTimeout = useRef(null);
+
+  useEffect(() => {
+    let rafId = null;
+
+    const handleWindowScroll = () => {
+      if (isUserScrollingInspector.current || !inspectorRef.current) return;
+
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const inspector = inspectorRef.current;
+        if (!inspector) return;
+
+        const maxInspectorScroll = inspector.scrollHeight - inspector.clientHeight;
+        if (maxInspectorScroll <= 0) return;
+
+        const scrollablePageHeight = document.documentElement.scrollHeight - window.innerHeight;
+        if (scrollablePageHeight <= 0) return;
+
+        const scrollRatio = Math.min(1, Math.max(0, window.scrollY / scrollablePageHeight));
+        isSyncingFromWindow.current = true;
+        inspector.scrollTop = Math.round(scrollRatio * maxInspectorScroll);
+      });
+    };
+
+    window.addEventListener("scroll", handleWindowScroll, { passive: true });
+
+    return () => {
+      window.removeEventListener("scroll", handleWindowScroll);
+      if (rafId) cancelAnimationFrame(rafId);
+      if (inspectorScrollTimeout.current) clearTimeout(inspectorScrollTimeout.current);
+    };
+  }, []);
+
+  const handleInspectorScroll = () => {
+    if (isSyncingFromWindow.current) {
+      isSyncingFromWindow.current = false;
+      return;
+    }
+    // User directly scrolled inspector (via trackpad, wheel, touch, or dragging inspector scrollbar)
+    isUserScrollingInspector.current = true;
+    if (inspectorScrollTimeout.current) clearTimeout(inspectorScrollTimeout.current);
+    inspectorScrollTimeout.current = setTimeout(() => {
+      isUserScrollingInspector.current = false;
+    }, 1200);
+  };
+
   function showToast(message) {
     setToast(message);
     setTimeout(() => {
@@ -814,7 +865,7 @@ function App() {
           </div>
         </section>
 
-        <aside className="inspector">
+        <aside className="inspector" ref={inspectorRef} onScroll={handleInspectorScroll}>
           <section><p className="panel-label">Layer inspector</p>{selected ? <><div className="inspector-title"><div><h2>{LAYER_LIBRARY[selected.type].label}</h2><p className="muted">Takes {displayShape(selected.input)} → produces {displayShape(selected.output)}</p></div><div className="layer-actions">
             <button type="button" onClick={() => moveLayer(-1)} title="Move up" aria-label="Move layer up">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

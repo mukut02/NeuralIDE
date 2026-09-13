@@ -24,6 +24,31 @@ h1, h2, p { margin: 0; } h1 { font-size: clamp(22px, 3vw, 31px); margin-top: 5px
 }
 .inspector {
   border-left: 1px solid #21334b;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #244163 transparent;
+}
+
+.inspector::-webkit-scrollbar {
+  width: 5px;
+}
+
+.inspector::-webkit-scrollbar-track {
+  background: rgba(6, 16, 30, 0.4);
+}
+
+.inspector::-webkit-scrollbar-thumb {
+  background: #244163;
+  border-radius: 4px;
+}
+
+.inspector::-webkit-scrollbar-thumb:hover {
+  background: #38bdf8;
 }
 
 /* Interactive Sidebar Resizer */
@@ -1927,6 +1952,9 @@ section + section { margin-top: 28px; }.muted { color: #91a3bb; font-size: 13px;
 @media (max-width: 1050px) {
   .workspace { grid-template-columns: var(--sidebar-width, 240px) 1fr; }
   .inspector {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
     grid-column: 1 / -1;
     border-left: 0;
     border-top: 1px solid #21334b;
