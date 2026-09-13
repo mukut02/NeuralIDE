@@ -395,10 +395,26 @@ function App() {
   const [inspectorOffset, setInspectorOffset] = useState(0);
   const workspaceRef = useRef(null);
   const inspectorRef = useRef(null);
+  const isManualClick = useRef(false);
+  const manualClickTimer = useRef(null);
 
-  const updateInspectorPosition = useCallback(() => {
+  function handleSelectLayer(id) {
+    isManualClick.current = true;
+    setSelectedId(id);
+    updateInspectorPosition(id);
+    if (manualClickTimer.current) clearTimeout(manualClickTimer.current);
+    manualClickTimer.current = setTimeout(() => {
+      isManualClick.current = false;
+    }, 800);
+  }
+
+  const updateInspectorPosition = useCallback((targetId) => {
     if (!workspaceRef.current) return;
-    const selectedEl = workspaceRef.current.querySelector(".layer-card.selected");
+    const target = targetId ?? selectedId;
+    const selectedEl =
+      workspaceRef.current.querySelector(`.layer-card[data-layer-id="${target}"]`) ||
+      workspaceRef.current.querySelector(".layer-card.selected") ||
+      workspaceRef.current.querySelector(".layer-card");
     if (!selectedEl) {
       setInspectorOffset(0);
       return;
@@ -418,18 +434,78 @@ function App() {
     const clampedOffset = Math.max(0, Math.min(rawOffset, maxOffset));
 
     setInspectorOffset(Math.round(clampedOffset));
-  }, []);
+  }, [selectedId]);
 
   useEffect(() => {
-    // Run after DOM paint on layer selection or architecture updates
-    const timer = setTimeout(updateInspectorPosition, 30);
-    return () => clearTimeout(timer);
+    updateInspectorPosition(selectedId);
+    const rafId = requestAnimationFrame(() => updateInspectorPosition(selectedId));
+    return () => cancelAnimationFrame(rafId);
   }, [selectedId, layers, activeTab, updateInspectorPosition]);
 
   useEffect(() => {
-    window.addEventListener("resize", updateInspectorPosition);
-    return () => window.removeEventListener("resize", updateInspectorPosition);
-  }, [updateInspectorPosition]);
+    const handleResize = () => updateInspectorPosition(selectedId);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [selectedId, updateInspectorPosition]);
+
+  // Synchronous Scroll-Spy: Track cards on the left as the user scrolls
+  useEffect(() => {
+    let rafId = null;
+
+    const handleWindowScroll = () => {
+      if (isManualClick.current || !workspaceRef.current) return;
+
+      // Don't auto-switch layer if user has an input field focused inside the inspector
+      const active = document.activeElement;
+      if (active && inspectorRef.current && inspectorRef.current.contains(active)) {
+        return;
+      }
+
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        if (!workspaceRef.current) return;
+        const cards = Array.from(workspaceRef.current.querySelectorAll(".flow .layer-card"));
+        if (cards.length === 0) return;
+
+        let closestId = null;
+
+        if (window.scrollY < 50) {
+          const rawId = cards[0].dataset.layerId;
+          closestId = /^\d+$/.test(rawId) ? Number(rawId) : rawId;
+        } else if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 50) {
+          const rawId = cards[cards.length - 1].dataset.layerId;
+          closestId = /^\d+$/.test(rawId) ? Number(rawId) : rawId;
+        } else {
+          const targetY = window.innerHeight * 0.38;
+          let minDistance = Infinity;
+
+          for (const card of cards) {
+            const rect = card.getBoundingClientRect();
+            if (rect.bottom > 60 && rect.top < window.innerHeight - 60) {
+              const dist = Math.abs(rect.top - targetY);
+              if (dist < minDistance) {
+                minDistance = dist;
+                const rawId = card.dataset.layerId;
+                closestId = /^\d+$/.test(rawId) ? Number(rawId) : rawId;
+              }
+            }
+          }
+        }
+
+        if (closestId != null && closestId !== selectedId) {
+          setSelectedId(closestId);
+          updateInspectorPosition(closestId);
+        }
+      });
+    };
+
+    window.addEventListener("scroll", handleWindowScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", handleWindowScroll);
+      if (rafId) cancelAnimationFrame(rafId);
+      if (manualClickTimer.current) clearTimeout(manualClickTimer.current);
+    };
+  }, [selectedId, updateInspectorPosition]);
 
   function showToast(message) {
     setToast(message);
@@ -772,7 +848,7 @@ function App() {
           <div className="canvas-heading"><div><p className="panel-label">Architecture flow</p><h2>Follow the tensor, layer by layer.</h2></div><span className="node-count">{layers.length} layers</span></div>
           <div className="flow" aria-label="Neural network computation graph" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { const type = event.dataTransfer.getData("application/neuralgraph-tool") || draggedTool; if (type && LAYER_LIBRARY[type]) addLayerAt(type); setDraggedTool(null); }}>
             <div className="io-node input-node"><span>INPUT IMAGE</span><b>{dataset.channels} × {dataset.size} × {dataset.size}</b></div>
-            {architecture.map((layer, index) => <div className="flow-step" key={layer.id}><div className="connector"><span>{displayShape(layer.input)}</span><i /></div><button draggable onDragStart={(event) => beginLayerDrag(event, layer.id)} onDragEnd={() => { setDraggedId(null); setDraggedTool(null); }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); dropLayer(layer.id, event); }} className={`layer-card ${selected?.id === layer.id ? "selected" : ""} ${draggedId === layer.id ? "dragging" : ""} ${draggedTool ? "drop-target" : ""} ${layer.note ? "invalid" : ""}`} onClick={() => setSelectedId(layer.id)}>
+            {architecture.map((layer, index) => <div className="flow-step" key={layer.id}><div className="connector"><span>{displayShape(layer.input)}</span><i /></div><button draggable onDragStart={(event) => beginLayerDrag(event, layer.id)} onDragEnd={() => { setDraggedId(null); setDraggedTool(null); }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); dropLayer(layer.id, event); }} data-layer-id={layer.id} className={`layer-card ${selected?.id === layer.id ? "selected" : ""} ${draggedId === layer.id ? "dragging" : ""} ${draggedTool ? "drop-target" : ""} ${layer.note ? "invalid" : ""}`} onClick={() => handleSelectLayer(layer.id)}>
               <span className="layer-index" title="Drag to reorder">
                 <svg className="drag-handle-icon" width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
                   <circle cx="2.5" cy="2.5" r="1.2" />
@@ -827,7 +903,7 @@ function App() {
                     <span className="strip-arrow">→</span>
                     <div
                       className={`strip-node ${selected?.id === layer.id ? "selected" : ""}`}
-                      onClick={() => setSelectedId(layer.id)}
+                      onClick={() => handleSelectLayer(layer.id)}
                       title={`Select Layer ${i + 1}: ${layer.type}`}
                     >
                       <span className="strip-label">L{i + 1} {layer.type}</span>
