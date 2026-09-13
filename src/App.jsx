@@ -532,7 +532,7 @@ function App() {
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand-group">
-        <span className="eyebrow">NEURALGRAPH / DESIGN STUDIO</span>
+        <span className="eyebrow">NEURAL IDE / DESIGN STUDIO</span>
         <h1>Build a network you can reason about.</h1>
       </div>
 

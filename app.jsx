@@ -444,7 +444,7 @@ EPOCHS = ${training.epochs}
       <header className="border-b border-slate-800 px-6 py-4 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">
-            NeuralGraph
+            Neural IDE
           </h1>
 
           <p className="text-sm text-slate-400">
