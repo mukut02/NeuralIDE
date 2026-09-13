@@ -1,11 +1,37 @@
 import { useMemo, useRef, useState } from "react";
+import CodeStudio from "./components/CodeStudio.jsx";
+import PaperDiagram from "./components/PaperDiagram.jsx";
+import { MODEL_PRESETS } from "./data/modelPresets.js";
+import { parseCodeToArchitecture } from "./utils/codeParser.js";
 import "./App.css";
 
 const DATASETS = {
-  MNIST: { name: "MNIST", channels: 1, size: 28, classes: 10, description: "Handwritten digits" },
-  "Fashion-MNIST": { name: "Fashion-MNIST", channels: 1, size: 28, classes: 10, description: "Clothing images" },
-  "CIFAR-10": { name: "CIFAR-10", channels: 3, size: 32, classes: 10, description: "Colour object images" },
+  MNIST: {
+    name: "MNIST",
+    channels: 1,
+    size: 28,
+    classes: 10,
+    description: "Handwritten digits",
+    classesList: ["0 - Zero", "1 - One", "2 - Two", "3 - Three", "4 - Four", "5 - Five", "6 - Six", "7 - Seven", "8 - Eight", "9 - Nine"],
+  },
+  "Fashion-MNIST": {
+    name: "Fashion-MNIST",
+    channels: 1,
+    size: 28,
+    classes: 10,
+    description: "Clothing images",
+    classesList: ["T-shirt / top", "Trouser", "Pullover", "Dress", "Coat", "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"],
+  },
+  "CIFAR-10": {
+    name: "CIFAR-10",
+    channels: 3,
+    size: 32,
+    classes: 10,
+    description: "Colour object images",
+    classesList: ["Airplane", "Automobile", "Bird", "Cat", "Deer", "Dog", "Frog", "Horse", "Ship", "Truck"],
+  },
 };
+
 
 const LAYER_LIBRARY = {
   Input: { label: "Input", group: "Input & data", params: {} },
@@ -149,23 +175,56 @@ function activationValue(type, x, slope = 0.1) {
 }
 
 function App() {
-  const [datasetName, setDatasetName] = useState("MNIST");
-  const [layers, setLayers] = useState(INITIAL_LAYERS);
-  const [connections, setConnections] = useState([]);
+  const initialPreset = MODEL_PRESETS.find((p) => p.id === "swin_tiny") || MODEL_PRESETS[0];
+  const [datasetName, setDatasetName] = useState(initialPreset.recommendedDataset || "CIFAR-10");
+  const [layers, setLayers] = useState(initialPreset.layers.map((l) => ({ ...l, params: { ...l.params } })));
+  const [connections, setConnections] = useState(initialPreset.connections ? [...initialPreset.connections] : []);
   const [draggedId, setDraggedId] = useState(null);
   const [draggedTool, setDraggedTool] = useState(null);
-  const [selectedId, setSelectedId] = useState(2);
-  const [training, setTraining] = useState({ optimizer: "AdamW", learningRate: 0.001, batchSize: 128, epochs: 12 });
+  const [selectedId, setSelectedId] = useState(initialPreset.layers[0]?.id || 1);
+  const [training, setTraining] = useState(initialPreset.training || { optimizer: "AdamW", learningRate: 0.0001, batchSize: 64, epochs: 30 });
   const [activationInput, setActivationInput] = useState(0.5);
-  const nextId = useRef(8);
-  const dataset = DATASETS[datasetName];
+  const nextId = useRef(Math.max(...initialPreset.layers.map((l) => l.id), 8) + 1);
+  const dataset = DATASETS[datasetName] || DATASETS["CIFAR-10"];
   const { result: architecture, issues } = useMemo(() => inferArchitecture(layers, dataset, connections), [layers, dataset, connections]);
   const selected = architecture.find((layer) => layer.id === selectedId) || architecture[0];
+
+  const [selectedPresetId, setSelectedPresetId] = useState(initialPreset.id);
+  const [usePretrainedWeights, setUsePretrainedWeights] = useState(initialPreset.pretrainedWeights ?? true);
+
+  function loadPreset(presetId) {
+    if (presetId === "custom") {
+      setSelectedPresetId("custom");
+      return;
+    }
+    const preset = MODEL_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    setSelectedPresetId(preset.id);
+    if (preset.recommendedDataset && DATASETS[preset.recommendedDataset]) {
+      setDatasetName(preset.recommendedDataset);
+    }
+    if (preset.training) {
+      setTraining((prev) => ({ ...prev, ...preset.training }));
+    }
+    if (preset.pretrainedWeights !== undefined) {
+      setUsePretrainedWeights(preset.pretrainedWeights);
+    }
+    setLayers(preset.layers.map((l) => ({ ...l, params: { ...l.params } })));
+    setConnections(preset.connections ? [...preset.connections] : []);
+    setSelectedId(preset.layers[0]?.id || 1);
+    nextId.current = Math.max(...preset.layers.map((l) => l.id), 8) + 1;
+    notifyArchitectureChange();
+    showToast(`Loaded ${preset.name} (${preset.year}) architecture!`);
+  }
+
+  const currentPreset = MODEL_PRESETS.find((p) => p.id === selectedPresetId);
 
   function updateLayer(id, key, value) {
     const parsed = Number(value);
     if (Number.isNaN(parsed)) return;
     setLayers((current) => current.map((layer) => layer.id === id ? { ...layer, params: { ...layer.params, [key]: parsed } } : layer));
+    setSelectedPresetId("custom");
+    notifyArchitectureChange();
   }
 
   function addLayer(type) {
@@ -177,6 +236,8 @@ function App() {
       return [...current.slice(0, at), layer, ...current.slice(at)];
     });
     setSelectedId(id);
+    setSelectedPresetId("custom");
+    notifyArchitectureChange();
   }
 
   function moveLayer(direction) {
@@ -185,6 +246,8 @@ function App() {
     if (index < 0 || target < 0 || target >= layers.length) return;
     setLayers((current) => current.map((layer, i) => i === index ? current[target] : i === target ? current[index] : layer));
     pruneInvalidConnections(layers, index, target);
+    setSelectedPresetId("custom");
+    notifyArchitectureChange();
   }
 
   function removeLayer() {
@@ -193,16 +256,20 @@ function App() {
     setLayers((current) => current.filter((layer) => layer.id !== selected.id));
     setConnections((current) => current.filter((connection) => connection.from !== selected.id && connection.to !== selected.id));
     setSelectedId(layers[Math.max(0, index - 1)]?.id);
+    setSelectedPresetId("custom");
+    notifyArchitectureChange();
   }
 
   function connectBranch(sourceId) {
     if (!selected || !sourceId) return;
     setConnections((current) => [...current.filter((connection) => connection.to !== selected.id), { from: Number(sourceId), to: selected.id }]);
+    notifyArchitectureChange();
   }
 
   function detachBranch() {
     if (!selected) return;
     setConnections((current) => current.filter((connection) => connection.to !== selected.id));
+    notifyArchitectureChange();
   }
 
   // Drops any branch connection that no longer points from an earlier layer to a
@@ -220,11 +287,83 @@ function App() {
   const finalLayer = architecture.at(-1);
   const classifierIssue = finalLayer?.output?.kind === "vector" && finalLayer.output.n !== dataset.classes
     ? `Your last layer has ${finalLayer.output.n} outputs, but ${datasetName} needs ${dataset.classes} class scores.` : null;
-  const code = makeCode(layers, dataset, connections, training);
+  const code = useMemo(() => makeCode(layers, dataset, connections, training, usePretrainedWeights, currentPreset), [layers, dataset, connections, training, usePretrainedWeights, currentPreset]);
   const [editableCode, setEditableCode] = useState("");
   const [codeEdited, setCodeEdited] = useState(false);
+  const [activeTab, setActiveTab] = useState("architecture");
+  const [autoSync, setAutoSync] = useState(true);
+  const [toast, setToast] = useState(null);
 
-  const visibleCode = codeEdited ? editableCode : code;
+  function showToast(message) {
+    setToast(message);
+    setTimeout(() => {
+      setToast((curr) => (curr === message ? null : curr));
+    }, 2800);
+  }
+
+  function notifyArchitectureChange() {
+    if (autoSync) {
+      setCodeEdited(false);
+    }
+  }
+
+  function handleResetCode() {
+    setEditableCode(code);
+    setCodeEdited(false);
+    showToast("PyTorch code synchronized with architecture blueprint!");
+  }
+
+  // Parse edited Python code and apply back into visual architecture
+  function handleSyncCodeToCanvas(codeToApply) {
+    const targetCode = codeToApply || editableCode || code;
+    const parsed = parseCodeToArchitecture(targetCode, DATASETS, LAYER_LIBRARY);
+
+    if (!parsed || !parsed.layers || parsed.layers.length === 0) {
+      showToast("Could not parse valid PyTorch layers from code.");
+      return false;
+    }
+
+    setSelectedPresetId("custom");
+    if (parsed.datasetName && DATASETS[parsed.datasetName] && parsed.datasetName !== datasetName) {
+      setDatasetName(parsed.datasetName);
+    }
+    if (parsed.training && Object.keys(parsed.training).length > 0) {
+      setTraining((prev) => ({ ...prev, ...parsed.training }));
+    }
+    setLayers(parsed.layers);
+    if (parsed.connections) {
+      setConnections(parsed.connections);
+    }
+    nextId.current = Math.max(...parsed.layers.map((l) => l.id), 8) + 1;
+    setSelectedId(parsed.layers[0]?.id || 1);
+    setCodeEdited(false);
+    showToast(`Visual architecture updated from code (${parsed.layers.length} layers)!`);
+    return true;
+  }
+
+  function handleCodeChange(newCode) {
+    setEditableCode(newCode);
+    setCodeEdited(true);
+
+    // If autoSync is enabled, continuously attempt to sync architecture
+    if (autoSync) {
+      const parsed = parseCodeToArchitecture(newCode, DATASETS, LAYER_LIBRARY);
+      if (parsed && parsed.layers && parsed.layers.length > 0) {
+        setSelectedPresetId("custom");
+        if (parsed.datasetName && DATASETS[parsed.datasetName] && parsed.datasetName !== datasetName) {
+          setDatasetName(parsed.datasetName);
+        }
+        if (parsed.training && Object.keys(parsed.training).length > 0) {
+          setTraining((prev) => ({ ...prev, ...parsed.training }));
+        }
+        setLayers(parsed.layers);
+        if (parsed.connections) {
+          setConnections(parsed.connections);
+        }
+        nextId.current = Math.max(...parsed.layers.map((l) => l.id), 8) + 1;
+      }
+    }
+  }
 
   function beginLayerDrag(event, id) {
     event.dataTransfer.effectAllowed = "move";
@@ -249,6 +388,7 @@ function App() {
       return [...current.slice(0, at), layer, ...current.slice(at)];
     });
     setSelectedId(id);
+    notifyArchitectureChange();
   }
 
   function dropLayer(targetId, event) {
@@ -288,42 +428,405 @@ function App() {
     setSelectedId(sourceId);
     setDraggedId(null);
     setDraggedTool(null);
+    notifyArchitectureChange();
   }
 
   return <div className="app-shell">
     <header className="topbar">
-      <div><span className="eyebrow">NEURALGRAPH / DESIGN STUDIO</span><h1>Build a network you can reason about.</h1></div>
-      <span className="export-badge">Diagram-aware PyTorch export</span>
+      <div className="brand-group">
+        <span className="eyebrow">NEURALGRAPH / DESIGN STUDIO</span>
+        <h1>Build a network you can reason about.</h1>
+      </div>
+
+      <nav className="topbar-tabs" role="tablist" aria-label="Workspace views">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "architecture"}
+          className={`tab-btn ${activeTab === "architecture" ? "active" : ""}`}
+          onClick={() => setActiveTab("architecture")}
+        >
+          <svg className="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+          <span>Architecture Flow</span>
+          <span className="tab-badge">{layers.length}</span>
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "diagram"}
+          className={`tab-btn ${activeTab === "diagram" ? "active" : ""}`}
+          onClick={() => setActiveTab("diagram")}
+        >
+          <svg className="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>
+          </svg>
+          <span>Model Insights</span>
+          <span className="tab-badge diagram-badge">Live Dry Run</span>
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "code"}
+          className={`tab-btn ${activeTab === "code" ? "active" : ""}`}
+          onClick={() => setActiveTab("code")}
+        >
+          <svg className="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+          </svg>
+          <span>PyTorch Code</span>
+          {codeEdited ? (
+            <span className="tab-badge warning">Draft</span>
+          ) : (
+            <span className="tab-badge live">Live</span>
+          )}
+        </button>
+      </nav>
+
+      <div className="topbar-actions">
+        <div className="preset-quick-picker">
+          <label htmlFor="topbar-preset-select" className="preset-picker-label">Model:</label>
+          <select
+            id="topbar-preset-select"
+            className="topbar-preset-select"
+            value={selectedPresetId}
+            onChange={(e) => loadPreset(e.target.value)}
+          >
+            <option value="custom">Custom Network ({layers.length}L)</option>
+            <optgroup label="Canonical Research Architectures">
+              {MODEL_PRESETS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.year})
+                </option>
+              ))}
+            </optgroup>
+          </select>
+        </div>
+      </div>
     </header>
 
-    <main className="workspace">
-      <aside className="sidebar">
-        <section><p className="panel-label">Dataset</p><select value={datasetName} onChange={(event) => setDatasetName(event.target.value)}>{Object.keys(DATASETS).map((name) => <option key={name}>{name}</option>)}</select>
-          <p className="muted">{dataset.description}</p><div className="dataset-stats"><span>INPUT <b>{dataset.channels} × {dataset.size} × {dataset.size}</b></span><span>CLASSES <b>{dataset.classes}</b></span></div></section>
-        <section><p className="panel-label">Layer toolbox</p><p className="muted">Click to add after the selected layer, or drag onto a layer to place it before or after.</p>
-          {Object.entries(LAYER_GROUPS).map(([group, types]) => <div className="tool-group" key={group}><span>{group}</span><div>{types.map((type) => <button key={type} draggable className="tool-button" onDragStart={(event) => beginToolDrag(event, type)} onDragEnd={() => setDraggedTool(null)} onClick={() => addLayer(type)}>+ {LAYER_LIBRARY[type].label}</button>)}</div></div>)}
+    {activeTab === "architecture" ? (
+      <main className="workspace">
+        <aside className="sidebar">
+          <section className="preset-card">
+            <div className="preset-card-header">
+              <p className="panel-label">Pre-Trained Architecture</p>
+              {currentPreset && (
+                <span className="preset-badge">{currentPreset.badge}</span>
+              )}
+            </div>
+            <select
+              value={selectedPresetId}
+              onChange={(e) => loadPreset(e.target.value)}
+              className="preset-select"
+            >
+              <option value="custom">Custom Network ({layers.length} Layers)</option>
+              <optgroup label="Canonical Research Architectures">
+                {MODEL_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.year}) · {p.category}
+                  </option>
+                ))}
+              </optgroup>
+            </select>
+            {currentPreset && (
+              <div className="preset-details-box">
+                <div className="preset-meta-row">
+                  <span className="preset-authors">{currentPreset.authors}</span>
+                  <span className="preset-year">{currentPreset.year}</span>
+                </div>
+                <p className="preset-desc">{currentPreset.description}</p>
+                <div className="preset-pills">
+                  <span className="preset-pill">{currentPreset.layers.length} Layers</span>
+                  <span className="preset-pill">{currentPreset.recommendedDataset}</span>
+                  <span className="preset-pill">{currentPreset.training.optimizer}</span>
+                </div>
+
+                {currentPreset.pretrainedWeights && (
+                  <div className="pretrained-toggle-card">
+                    <div className="toggle-text-block">
+                      <div className="toggle-title-row">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                        </svg>
+                        <span className="toggle-main-label">Pre-trained Weights</span>
+                      </div>
+                      <span className="toggle-sub-label">
+                        {usePretrainedWeights ? "ImageNet-1K (torchvision)" : "Scratch Init (He / Xavier)"}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={usePretrainedWeights}
+                      className={`ios-toggle-btn ${usePretrainedWeights ? "active" : ""}`}
+                      onClick={() => {
+                        const next = !usePretrainedWeights;
+                        setUsePretrainedWeights(next);
+                        notifyArchitectureChange();
+                        showToast(next ? "Pre-trained ImageNet-1K weights loaded!" : "Initialized with random weights from scratch.");
+                      }}
+                      title={usePretrainedWeights ? "Pre-trained ImageNet weights loaded. Click to train from scratch." : "Training from scratch. Click to load pre-trained weights."}
+                    >
+                      <span className="ios-toggle-thumb" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          <section><p className="panel-label">Dataset</p><select value={datasetName} onChange={(event) => { setDatasetName(event.target.value); notifyArchitectureChange(); }}>{Object.keys(DATASETS).map((name) => <option key={name}>{name}</option>)}</select>
+            <p className="muted">{dataset.description}</p><div className="dataset-stats"><span>INPUT <b>{dataset.channels} × {dataset.size} × {dataset.size}</b></span><span>CLASSES <b>{dataset.classes}</b></span></div></section>
+
+          <section className="training-card">
+            <div className="training-card-header">
+              <p className="panel-label">Training setup</p>
+              <span className="training-badge">{training.optimizer}</span>
+            </div>
+            <div className="training-grid">
+              <label>Optimizer
+                <select value={training.optimizer} onChange={(event) => { setTraining((current) => ({ ...current, optimizer: event.target.value })); notifyArchitectureChange(); }}>
+                  <option>AdamW</option>
+                  <option>SGD</option>
+                  <option>RMSprop</option>
+                </select>
+              </label>
+              <label>Learning rate
+                <input type="number" min="0" step="0.0001" value={training.learningRate} onChange={(event) => { setTraining((current) => ({ ...current, learningRate: Number(event.target.value) })); notifyArchitectureChange(); }} />
+              </label>
+              <label>Batch size
+                <input type="number" min="1" step="1" value={training.batchSize} onChange={(event) => { setTraining((current) => ({ ...current, batchSize: Number(event.target.value) })); notifyArchitectureChange(); }} />
+              </label>
+              <label>Epochs
+                <input type="number" min="1" step="1" value={training.epochs} onChange={(event) => { setTraining((current) => ({ ...current, epochs: Number(event.target.value) })); notifyArchitectureChange(); }} />
+              </label>
+            </div>
+          </section>
+
+          <section><p className="panel-label">Layer toolbox</p><p className="muted">Click to add after the selected layer, or drag onto a layer to place it before or after.</p>
+            {Object.entries(LAYER_GROUPS).map(([group, types]) => <div className="tool-group" key={group}><span>{group}</span><div>{types.map((type) => <button key={type} draggable className="tool-button" onDragStart={(event) => beginToolDrag(event, type)} onDragEnd={() => setDraggedTool(null)} onClick={() => addLayer(type)}>+ {LAYER_LIBRARY[type].label}</button>)}</div></div>)}
+          </section>
+        </aside>
+
+        <section className="canvas">
+          <div className="canvas-heading"><div><p className="panel-label">Architecture flow</p><h2>Follow the tensor, layer by layer.</h2></div><span className="node-count">{layers.length} layers</span></div>
+          <div className="flow" aria-label="Neural network computation graph" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { const type = event.dataTransfer.getData("application/neuralgraph-tool") || draggedTool; if (type && LAYER_LIBRARY[type]) addLayerAt(type); setDraggedTool(null); }}>
+            <div className="io-node input-node"><span>INPUT IMAGE</span><b>{dataset.channels} × {dataset.size} × {dataset.size}</b></div>
+            {architecture.map((layer, index) => <div className="flow-step" key={layer.id}><div className="connector"><span>{displayShape(layer.input)}</span><i /></div><button draggable onDragStart={(event) => beginLayerDrag(event, layer.id)} onDragEnd={() => { setDraggedId(null); setDraggedTool(null); }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); dropLayer(layer.id, event); }} className={`layer-card ${selected?.id === layer.id ? "selected" : ""} ${draggedId === layer.id ? "dragging" : ""} ${draggedTool ? "drop-target" : ""} ${layer.note ? "invalid" : ""}`} onClick={() => setSelectedId(layer.id)}>
+              <span className="layer-index" title="Drag to reorder">
+                <svg className="drag-handle-icon" width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
+                  <circle cx="2.5" cy="2.5" r="1.2" />
+                  <circle cx="7.5" cy="2.5" r="1.2" />
+                  <circle cx="2.5" cy="7" r="1.2" />
+                  <circle cx="7.5" cy="7" r="1.2" />
+                  <circle cx="2.5" cy="11.5" r="1.2" />
+                  <circle cx="7.5" cy="11.5" r="1.2" />
+                </svg>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+              </span>
+              <div><strong>{LAYER_LIBRARY[layer.type].label}</strong><small>{parameterDescription(layer)}</small></div><div className="shape"><small>OUTPUT</small><b>{displayShape(layer.output)}</b></div>
+            </button>{layer.connection && layer.branch && (
+              <p className="branch-link">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "-1px", marginRight: 4 }}>
+                  <line x1="7" y1="17" x2="17" y2="7" />
+                  <polyline points="7 7 17 7 17 7" />
+                </svg>
+                { ["CrossAttention", "MultiHeadAttention"].includes(layer.type) ? "context from" : "branch from" } layer {architecture.findIndex((item) => item.id === layer.connection.from) + 1}
+              </p>
+            )}{layer.note && <p className="layer-error">{layer.note}</p>}</div>)}
+            <div className="connector"><span>{displayShape(finalLayer?.output)}</span><i /></div><div className="io-node output-node"><span>PREDICTION</span><b>{dataset.classes} classes</b></div>
+
+            {/* Dimensional Dry Run Strip */}
+            <div className="dry-run-strip">
+              <div className="strip-header">
+                <div className="strip-title">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#79b7f4" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                  </svg>
+                  <span>Dimensional Dry Run Preview</span>
+                </div>
+                <button
+                  type="button"
+                  className="strip-launch-btn"
+                  onClick={() => setActiveTab("diagram")}
+                >
+                  <span>Explore Model Insights</span>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="9 18 15 12 9 6"/>
+                  </svg>
+                </button>
+              </div>
+
+              <div className="strip-nodes-scroller">
+                <div className="strip-node input-node">
+                  <span className="strip-label">Input</span>
+                  <strong className="strip-shape">{dataset.channels}×{dataset.size}×{dataset.size}</strong>
+                </div>
+                {architecture.map((layer, i) => (
+                  <div key={layer.id} className="strip-step-wrapper">
+                    <span className="strip-arrow">→</span>
+                    <div
+                      className={`strip-node ${selected?.id === layer.id ? "selected" : ""}`}
+                      onClick={() => setSelectedId(layer.id)}
+                      title={`Select Layer ${i + 1}: ${layer.type}`}
+                    >
+                      <span className="strip-label">L{i + 1} {layer.type}</span>
+                      <strong className="strip-shape">{displayShape(layer.output)}</strong>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flow-cta-wrapper">
+              <button type="button" className="flow-code-cta" onClick={() => setActiveTab("diagram")}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>
+                </svg>
+                <span>Open Model Insights & Live Dry Run</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                </svg>
+              </button>
+            </div>
+          </div>
         </section>
-        <section className="training-card"><p className="panel-label">Training setup</p><label>Optimizer<select value={training.optimizer} onChange={(event) => setTraining((current) => ({ ...current, optimizer: event.target.value }))}><option>AdamW</option><option>SGD</option><option>RMSprop</option></select></label><label>Learning rate<input type="number" min="0" step="0.0001" value={training.learningRate} onChange={(event) => setTraining((current) => ({ ...current, learningRate: Number(event.target.value) }))} /></label><label>Batch size<input type="number" min="1" step="1" value={training.batchSize} onChange={(event) => setTraining((current) => ({ ...current, batchSize: Number(event.target.value) }))} /></label><label>Epochs<input type="number" min="1" step="1" value={training.epochs} onChange={(event) => setTraining((current) => ({ ...current, epochs: Number(event.target.value) }))} /></label></section>
-      </aside>
 
-      <section className="canvas">
-        <div className="canvas-heading"><div><p className="panel-label">Architecture flow</p><h2>Follow the tensor, layer by layer.</h2></div><span className="node-count">{layers.length} layers</span></div>
-        <div className="flow" aria-label="Neural network computation graph" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { const type = event.dataTransfer.getData("application/neuralgraph-tool") || draggedTool; if (type && LAYER_LIBRARY[type]) addLayerAt(type); setDraggedTool(null); }}>
-          <div className="io-node input-node"><span>INPUT IMAGE</span><b>{dataset.channels} × {dataset.size} × {dataset.size}</b></div>
-          {architecture.map((layer, index) => <div className="flow-step" key={layer.id}><div className="connector"><span>{displayShape(layer.input)}</span><i /></div><button draggable onDragStart={(event) => beginLayerDrag(event, layer.id)} onDragEnd={() => { setDraggedId(null); setDraggedTool(null); }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); dropLayer(layer.id, event); }} className={`layer-card ${selected?.id === layer.id ? "selected" : ""} ${draggedId === layer.id ? "dragging" : ""} ${draggedTool ? "drop-target" : ""} ${layer.note ? "invalid" : ""}`} onClick={() => setSelectedId(layer.id)}>
-            <span className="layer-index" title="Drag to reorder">⠿ {String(index + 1).padStart(2, "0")}</span><div><strong>{LAYER_LIBRARY[layer.type].label}</strong><small>{parameterDescription(layer)}</small></div><div className="shape"><small>OUTPUT</small><b>{displayShape(layer.output)}</b></div>
-          </button>{layer.connection && layer.branch && <p className="branch-link">↗ { ["CrossAttention", "MultiHeadAttention"].includes(layer.type) ? "context from" : "branch from" } layer {architecture.findIndex((item) => item.id === layer.connection.from) + 1}</p>}{layer.note && <p className="layer-error">{layer.note}</p>}</div>)}
-          <div className="connector"><span>{displayShape(finalLayer?.output)}</span><i /></div><div className="io-node output-node"><span>PREDICTION</span><b>{dataset.classes} classes</b></div>
-        </div>
-      </section>
+        <aside className="inspector">
+          <section><p className="panel-label">Layer inspector</p>{selected ? <><div className="inspector-title"><div><h2>{LAYER_LIBRARY[selected.type].label}</h2><p className="muted">Takes {displayShape(selected.input)} → produces {displayShape(selected.output)}</p></div><div className="layer-actions">
+            <button type="button" onClick={() => moveLayer(-1)} title="Move up" aria-label="Move layer up">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="18 15 12 9 6 15" />
+              </svg>
+            </button>
+            <button type="button" onClick={() => moveLayer(1)} title="Move down" aria-label="Move layer down">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            <button type="button" onClick={removeLayer} title="Delete" aria-label="Delete layer">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div></div>{BRANCH_TARGETS.includes(selected.type) && <div className="branch-tools"><label>{["CrossAttention", "MultiHeadAttention"].includes(selected.type) ? "Attention context" : "Connect from layer"}<select value={selected.connection?.from || ""} onChange={(event) => connectBranch(event.target.value)}><option value="">Choose an earlier layer…</option>{architecture.slice(0, architecture.findIndex((layer) => layer.id === selected.id)).map((layer, index) => <option key={layer.id} value={layer.id}>Layer {index + 1}: {LAYER_LIBRARY[layer.type].label} ({displayShape(layer.output)})</option>)}</select></label>{selected.connection && <button onClick={detachBranch}>Detach</button>}</div>}<LayerControls layer={selected} updateLayer={updateLayer} /></> : <p className="muted">Select a layer to inspect it.</p>}</section>
+          {selected && isActivation(selected.type) && <ActivationLab type={selected.type} slope={selected.params.slope} input={activationInput} setInput={setActivationInput} output={activationValue(selected.type, activationInput, selected.params.slope)} />}
+          <section className="advice">
+            <p className="panel-label">Design checks</p>
+            {issues.length === 0 && !classifierIssue ? (
+              <p className="good">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9de5c1" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "-2px", marginRight: 6 }}>
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                Shapes are compatible so far.
+              </p>
+            ) : null}
+            {issues.map((issue) => (
+              <p key={issue.index} className="warning">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffb3ad" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "-2px", marginRight: 6 }}>
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                Layer {issue.index + 1}: {issue.message}
+              </p>
+            ))}
+            {classifierIssue && (
+              <p className="warning">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffb3ad" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "-2px", marginRight: 6 }}>
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                {classifierIssue}
+              </p>
+            )}
+            {layers.some((layer) => layer.type === "Softmax") && (
+              <p className="tip">
+                Softmax turns class scores into probabilities. With PyTorch’s CrossEntropyLoss, leave it out during training and apply it only for display.
+              </p>
+            )}
+          </section>
+        </aside>
+      </main>
+    ) : activeTab === "diagram" ? (
+      <main className="diagram-tab-workspace">
+        <PaperDiagram
+          layers={layers}
+          architecture={architecture}
+          dataset={dataset}
+          connections={connections}
+          training={training}
+          onSelectLayer={(id) => setSelectedId(id)}
+          selectedId={selectedId}
+          usePretrainedWeights={usePretrainedWeights}
+          currentPreset={currentPreset}
+          onTogglePretrainedWeights={() => {
+            const next = !usePretrainedWeights;
+            setUsePretrainedWeights(next);
+            notifyArchitectureChange();
+            showToast(next ? "Pre-trained ImageNet-1K weights loaded!" : "Switched to scratch training.");
+          }}
+          showToast={showToast}
+        />
+      </main>
+    ) : (
+      <main className="code-tab-workspace">
+        <CodeStudio
+          code={code}
+          editableCode={editableCode}
+          codeEdited={codeEdited}
+          autoSync={autoSync}
+          onToggleAutoSync={() => {
+            const next = !autoSync;
+            setAutoSync(next);
+            if (next) {
+              setEditableCode(code);
+              setCodeEdited(false);
+              showToast("Live Sync enabled: Code and canvas are now synchronized!");
+            } else {
+              showToast("Live Sync paused. Code edits can be manually applied.");
+            }
+          }}
+          onSyncToCanvas={handleSyncCodeToCanvas}
+          onResetCode={handleResetCode}
+          onCodeChange={handleCodeChange}
+          onBackToArchitecture={() => setActiveTab("architecture")}
+          dataset={dataset}
+          layers={layers}
+          architecture={architecture}
+          training={training}
+          usePretrainedWeights={usePretrainedWeights}
+          currentPreset={currentPreset}
+          onTogglePretrainedWeights={() => {
+            const next = !usePretrainedWeights;
+            setUsePretrainedWeights(next);
+            notifyArchitectureChange();
+            showToast(next ? "Pre-trained ImageNet-1K weights loaded!" : "Switched to scratch training.");
+          }}
+          showToast={showToast}
+        />
+      </main>
+    )}
 
-      <aside className="inspector">
-        <section><p className="panel-label">Layer inspector</p>{selected ? <><div className="inspector-title"><div><h2>{LAYER_LIBRARY[selected.type].label}</h2><p className="muted">Takes {displayShape(selected.input)} → produces {displayShape(selected.output)}</p></div><div className="layer-actions"><button onClick={() => moveLayer(-1)} title="Move up">↑</button><button onClick={() => moveLayer(1)} title="Move down">↓</button><button onClick={removeLayer} title="Delete">×</button></div></div>{BRANCH_TARGETS.includes(selected.type) && <div className="branch-tools"><label>{["CrossAttention", "MultiHeadAttention"].includes(selected.type) ? "Attention context" : "Connect from layer"}<select value={selected.connection?.from || ""} onChange={(event) => connectBranch(event.target.value)}><option value="">Choose an earlier layer…</option>{architecture.slice(0, architecture.findIndex((layer) => layer.id === selected.id)).map((layer, index) => <option key={layer.id} value={layer.id}>Layer {index + 1}: {LAYER_LIBRARY[layer.type].label} ({displayShape(layer.output)})</option>)}</select></label>{selected.connection && <button onClick={detachBranch}>Detach</button>}</div>}<LayerControls layer={selected} updateLayer={updateLayer} /></> : <p className="muted">Select a layer to inspect it.</p>}</section>
-        {selected && isActivation(selected.type) && <ActivationLab type={selected.type} slope={selected.params.slope} input={activationInput} setInput={setActivationInput} output={activationValue(selected.type, activationInput, selected.params.slope)} />}
-        <section className="advice"><p className="panel-label">Design checks</p>{issues.length === 0 && !classifierIssue ? <p className="good">✓ Shapes are compatible so far.</p> : null}{issues.map((issue) => <p key={issue.index} className="warning">! Layer {issue.index + 1}: {issue.message}</p>)}{classifierIssue && <p className="warning">! {classifierIssue}</p>}{layers.some((layer) => layer.type === "Softmax") && <p className="tip">Softmax turns class scores into probabilities. With PyTorch’s CrossEntropyLoss, leave it out during training and apply it only for display.</p>}</section>
-      </aside>
-    </main>
-    <section className="code-panel"><div><p className="panel-label">Generated blueprint {codeEdited ? "· edited draft" : ""}</p><h2>PyTorch model</h2></div><div className="code-actions"><button onClick={() => setCodeEdited(false)}>Reset generated</button><button onClick={() => navigator.clipboard?.writeText(visibleCode)}>Copy code</button></div><textarea className="code-editor" aria-label="Editable PyTorch model code" spellCheck="false" value={visibleCode} onChange={(event) => { setEditableCode(event.target.value); setCodeEdited(true); }} /></section>
+    {toast && (
+      <div className="toast-notification" role="status">
+        <span className="toast-icon">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        </span>
+        <span>{toast}</span>
+      </div>
+    )}
   </div>;
 }
 
@@ -356,7 +859,7 @@ function parameterDescription(layer) {
   return "preserves tensor shape";
 }
 
-function makeCode(layers, dataset, connections, training) {
+function makeCode(layers, dataset, connections, training, usePretrainedWeights = false, currentPreset = null) {
   let channels = dataset.channels;
   const definitions = [];
   const forward = [];
@@ -425,13 +928,7 @@ function makeCode(layers, dataset, connections, training) {
       ? `torch.optim.SGD(\n    model.parameters(),\n    lr=${training.learningRate},\n    momentum=0.9\n)`
       : `torch.optim.RMSprop(\n    model.parameters(),\n    lr=${training.learningRate}\n)`;
 
-    return `import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
-
-${hasSelfAttention || hasCrossAttention ? `def _valid_heads(channels, requested_heads):
+  const attentionClasses = `${hasSelfAttention || hasCrossAttention ? `def _valid_heads(channels, requested_heads):
     heads = min(channels, requested_heads)
     while channels % heads:
         heads -= 1
@@ -443,7 +940,6 @@ class SelfAttentionBlock(nn.Module):
         self.image_attention = nn.MultiheadAttention(
             channels, _valid_heads(channels, heads), batch_first=True
         )
-        # A vector is treated as a sequence of scalar features.
         self.vector_attention = nn.MultiheadAttention(1, 1, batch_first=True)
 
     def forward(self, x):
@@ -479,9 +975,117 @@ class SelfAttentionBlock(nn.Module):
         )
         return query + attended.squeeze(-1)
 
-` : ""}# ${dataset.name}: ${dataset.channels} × ${dataset.size} × ${dataset.size}, ${dataset.classes} classes
+` : ""}`;
 
-# ${dataset.name}: ${dataset.channels} × ${dataset.size} × ${dataset.size}, ${dataset.classes} classes
+  const isPretrained = Boolean(usePretrainedWeights && currentPreset?.torchvisionModel);
+
+  if (isPretrained) {
+    const weightsEnum = currentPreset.torchvisionWeights ? currentPreset.torchvisionWeights.split(".")[0] : null;
+    const weightsImport = weightsEnum ? `, ${weightsEnum}` : "";
+    const headReplacement = currentPreset.id === "swin_tiny"
+      ? `in_features = model.head.in_features\nmodel.head = nn.Linear(in_features, ${dataset.classes})`
+      : currentPreset.id === "resnet"
+        ? `in_features = model.fc.in_features\nmodel.fc = nn.Linear(in_features, ${dataset.classes})`
+        : currentPreset.id === "vgg11" || currentPreset.id === "alexnet"
+          ? `in_features = model.classifier[6].in_features\nmodel.classifier[6] = nn.Linear(in_features, ${dataset.classes})`
+          : currentPreset.id === "mobilenetv2"
+            ? `in_features = model.classifier[1].in_features\nmodel.classifier[1] = nn.Linear(in_features, ${dataset.classes})`
+            : currentPreset.id === "vit_tiny"
+              ? `in_features = model.heads.head.in_features\nmodel.heads.head = nn.Linear(in_features, ${dataset.classes})`
+              : `in_features = getattr(model, "head", getattr(model, "fc", None)).in_features\nmodel.head = nn.Linear(in_features, ${dataset.classes})`;
+
+    return `import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+from torchvision.models import ${currentPreset.torchvisionModel}${weightsImport}
+
+# ==============================================================================
+# 1. Dataset & DataLoader: ${dataset.name} (${dataset.channels} × ${dataset.size} × ${dataset.size} → ${dataset.classes} classes)
+# ==============================================================================
+transform = transforms.Compose([transforms.ToTensor()])
+train_set = datasets.${
+  dataset.name === "CIFAR-10"
+    ? "CIFAR10"
+    : dataset.name.replace("-", "")
+}(
+    root="./data", train=True, download=True, transform=transform
+)
+
+train_loader = DataLoader(
+    train_set,
+    batch_size=${training.batchSize},
+    shuffle=True
+)
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# ==============================================================================
+# 2. Pre-trained Backbone Loader: ${currentPreset.name}
+#    Checkpoint: ImageNet-1K Pre-trained Weights (${currentPreset.torchvisionWeights})
+# ==============================================================================
+weights = ${currentPreset.torchvisionWeights}
+model = ${currentPreset.torchvisionModel}(weights=weights)
+
+# Transfer Learning: Adapt classifier head to target dataset (${dataset.classes} classes)
+${headReplacement}
+
+model = model.to(device)
+
+# ==============================================================================
+# 3. Custom Layer-by-Layer Architectural Blueprint (for scratch training / analysis)
+# ==============================================================================
+${attentionClasses}class CustomArchitectureBlueprint(nn.Module):
+    def __init__(self):
+        super().__init__()
+        ${definitions.join("\n        ") || "pass"}
+
+    def forward(self, x):
+        features = {}  # diagram layer outputs: features[1], features[2], ...
+        ${forward.join("\n        ")}
+        return x
+
+# ==============================================================================
+# 4. Optimization Engine & Training Loop
+# ==============================================================================
+optimizer = ${optimizerCall}
+
+criterion = nn.CrossEntropyLoss()
+
+for epoch in range(${training.epochs}):
+    model.train()
+    running_loss, correct, total = 0.0, 0, 0
+
+    for images, labels in train_loader:
+        images, labels = images.to(device), labels.to(device)
+
+        optimizer.zero_grad()
+
+        logits = model(images)
+        loss = criterion(logits, labels)
+
+        loss.backward()
+        optimizer.step()
+
+        running_loss += loss.item() * images.size(0)
+        correct += (logits.argmax(dim=1) == labels).sum().item()
+        total += labels.size(0)
+
+    print(
+        f"epoch {epoch + 1:02d} | "
+        f"loss {running_loss / total:.4f} | "
+        f"accuracy {correct / total:.2%}"
+    )`;
+  }
+
+  return `import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+
+${attentionClasses}# ${dataset.name}: ${dataset.channels} × ${dataset.size} × ${dataset.size}, ${dataset.classes} classes
 transform = transforms.Compose([transforms.ToTensor()])
 train_set = datasets.${
   dataset.name === "CIFAR-10"
