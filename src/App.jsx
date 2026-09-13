@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import CodeStudio from "./components/CodeStudio.jsx";
 import PaperDiagram from "./components/PaperDiagram.jsx";
 import { MODEL_PRESETS } from "./data/modelPresets.js";
@@ -391,8 +391,7 @@ function App() {
     }
   };
 
-  // Layer Inspector Floating Position Follow Controller
-  const [inspectorOffset, setInspectorOffset] = useState(0);
+  // Layer Inspector Synchronous Scroll Controller
   const workspaceRef = useRef(null);
   const inspectorRef = useRef(null);
   const isManualClick = useRef(false);
@@ -401,52 +400,11 @@ function App() {
   function handleSelectLayer(id) {
     isManualClick.current = true;
     setSelectedId(id);
-    updateInspectorPosition(id);
     if (manualClickTimer.current) clearTimeout(manualClickTimer.current);
     manualClickTimer.current = setTimeout(() => {
       isManualClick.current = false;
     }, 800);
   }
-
-  const updateInspectorPosition = useCallback((targetId) => {
-    if (!workspaceRef.current) return;
-    const target = targetId ?? selectedId;
-    const selectedEl =
-      workspaceRef.current.querySelector(`.layer-card[data-layer-id="${target}"]`) ||
-      workspaceRef.current.querySelector(".layer-card.selected") ||
-      workspaceRef.current.querySelector(".layer-card");
-    if (!selectedEl) {
-      setInspectorOffset(0);
-      return;
-    }
-
-    const workspaceRect = workspaceRef.current.getBoundingClientRect();
-    const selectedRect = selectedEl.getBoundingClientRect();
-    const inspectorEl = inspectorRef.current;
-    const inspectorHeight = inspectorEl ? inspectorEl.offsetHeight : 420;
-    const workspaceHeight = workspaceRef.current.offsetHeight;
-
-    // Calculate vertical offset relative to workspace top to align with active layer
-    const rawOffset = selectedRect.top - workspaceRect.top - 12;
-
-    // Clamp so inspector never extends past the bottom of the workspace
-    const maxOffset = Math.max(0, workspaceHeight - inspectorHeight - 24);
-    const clampedOffset = Math.max(0, Math.min(rawOffset, maxOffset));
-
-    setInspectorOffset(Math.round(clampedOffset));
-  }, [selectedId]);
-
-  useEffect(() => {
-    updateInspectorPosition(selectedId);
-    const rafId = requestAnimationFrame(() => updateInspectorPosition(selectedId));
-    return () => cancelAnimationFrame(rafId);
-  }, [selectedId, layers, activeTab, updateInspectorPosition]);
-
-  useEffect(() => {
-    const handleResize = () => updateInspectorPosition(selectedId);
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [selectedId, updateInspectorPosition]);
 
   // Synchronous Scroll-Spy: Track cards on the left as the user scrolls
   useEffect(() => {
@@ -476,7 +434,8 @@ function App() {
           const rawId = cards[cards.length - 1].dataset.layerId;
           closestId = /^\d+$/.test(rawId) ? Number(rawId) : rawId;
         } else {
-          const targetY = window.innerHeight * 0.38;
+          // Target 32% from top of viewport, aligned with sticky inspector top area
+          const targetY = window.innerHeight * 0.32;
           let minDistance = Infinity;
 
           for (const card of cards) {
@@ -494,7 +453,6 @@ function App() {
 
         if (closestId != null && closestId !== selectedId) {
           setSelectedId(closestId);
-          updateInspectorPosition(closestId);
         }
       });
     };
@@ -505,7 +463,7 @@ function App() {
       if (rafId) cancelAnimationFrame(rafId);
       if (manualClickTimer.current) clearTimeout(manualClickTimer.current);
     };
-  }, [selectedId, updateInspectorPosition]);
+  }, [selectedId]);
 
   function showToast(message) {
     setToast(message);
@@ -929,62 +887,64 @@ function App() {
           </div>
         </section>
 
-        <aside className="inspector" ref={inspectorRef} style={{ transform: `translateY(${inspectorOffset}px)` }}>
-          <section><p className="panel-label">Layer inspector</p>{selected ? <><div className="inspector-title"><div><h2>{LAYER_LIBRARY[selected.type].label}</h2><p className="muted">Takes {displayShape(selected.input)} → produces {displayShape(selected.output)}</p></div><div className="layer-actions">
-            <button type="button" onClick={() => moveLayer(-1)} title="Move up" aria-label="Move layer up">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="18 15 12 9 6 15" />
-              </svg>
-            </button>
-            <button type="button" onClick={() => moveLayer(1)} title="Move down" aria-label="Move layer down">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </button>
-            <button type="button" onClick={removeLayer} title="Delete" aria-label="Delete layer">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div></div>{BRANCH_TARGETS.includes(selected.type) && <div className="branch-tools"><label>{["CrossAttention", "MultiHeadAttention"].includes(selected.type) ? "Attention context" : "Connect from layer"}<select value={selected.connection?.from || ""} onChange={(event) => connectBranch(event.target.value)}><option value="">Choose an earlier layer…</option>{architecture.slice(0, architecture.findIndex((layer) => layer.id === selected.id)).map((layer, index) => <option key={layer.id} value={layer.id}>Layer {index + 1}: {LAYER_LIBRARY[layer.type].label} ({displayShape(layer.output)})</option>)}</select></label>{selected.connection && <button onClick={detachBranch}>Detach</button>}</div>}<LayerControls layer={selected} updateLayer={updateLayer} /></> : <p className="muted">Select a layer to inspect it.</p>}</section>
-          {selected && isActivation(selected.type) && <ActivationLab type={selected.type} slope={selected.params.slope} input={activationInput} setInput={setActivationInput} output={activationValue(selected.type, activationInput, selected.params.slope)} />}
-          <section className="advice">
-            <p className="panel-label">Design checks</p>
-            {issues.length === 0 && !classifierIssue ? (
-              <p className="good">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9de5c1" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "-2px", marginRight: 6 }}>
-                  <polyline points="20 6 9 17 4 12" />
+        <aside className="inspector" ref={inspectorRef}>
+          <div className="inspector-sticky-content">
+            <section><p className="panel-label">Layer inspector</p>{selected ? <><div className="inspector-title"><div><h2>{LAYER_LIBRARY[selected.type].label}</h2><p className="muted">Takes {displayShape(selected.input)} → produces {displayShape(selected.output)}</p></div><div className="layer-actions">
+              <button type="button" onClick={() => moveLayer(-1)} title="Move up" aria-label="Move layer up">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="18 15 12 9 6 15" />
                 </svg>
-                Shapes are compatible so far.
-              </p>
-            ) : null}
-            {issues.map((issue) => (
-              <p key={issue.index} className="warning">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffb3ad" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "-2px", marginRight: 6 }}>
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
+              </button>
+              <button type="button" onClick={() => moveLayer(1)} title="Move down" aria-label="Move layer down">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 12 15 18 9" />
                 </svg>
-                Layer {issue.index + 1}: {issue.message}
-              </p>
-            ))}
-            {classifierIssue && (
-              <p className="warning">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffb3ad" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "-2px", marginRight: 6 }}>
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
+              </button>
+              <button type="button" onClick={removeLayer} title="Delete" aria-label="Delete layer">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
-                {classifierIssue}
-              </p>
-            )}
-            {layers.some((layer) => layer.type === "Softmax") && (
-              <p className="tip">
-                Softmax turns class scores into probabilities. With PyTorch’s CrossEntropyLoss, leave it out during training and apply it only for display.
-              </p>
-            )}
-          </section>
+              </button>
+            </div></div>{BRANCH_TARGETS.includes(selected.type) && <div className="branch-tools"><label>{["CrossAttention", "MultiHeadAttention"].includes(selected.type) ? "Attention context" : "Connect from layer"}<select value={selected.connection?.from || ""} onChange={(event) => connectBranch(event.target.value)}><option value="">Choose an earlier layer…</option>{architecture.slice(0, architecture.findIndex((layer) => layer.id === selected.id)).map((layer, index) => <option key={layer.id} value={layer.id}>Layer {index + 1}: {LAYER_LIBRARY[layer.type].label} ({displayShape(layer.output)})</option>)}</select></label>{selected.connection && <button onClick={detachBranch}>Detach</button>}</div>}<LayerControls layer={selected} updateLayer={updateLayer} /></> : <p className="muted">Select a layer to inspect it.</p>}</section>
+            {selected && isActivation(selected.type) && <ActivationLab type={selected.type} slope={selected.params.slope} input={activationInput} setInput={setActivationInput} output={activationValue(selected.type, activationInput, selected.params.slope)} />}
+            <section className="advice">
+              <p className="panel-label">Design checks</p>
+              {issues.length === 0 && !classifierIssue ? (
+                <p className="good">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9de5c1" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "-2px", marginRight: 6 }}>
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  Shapes are compatible so far.
+                </p>
+              ) : null}
+              {issues.map((issue) => (
+                <p key={issue.index} className="warning">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffb3ad" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "-2px", marginRight: 6 }}>
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  Layer {issue.index + 1}: {issue.message}
+                </p>
+              ))}
+              {classifierIssue && (
+                <p className="warning">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffb3ad" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "-2px", marginRight: 6 }}>
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  {classifierIssue}
+                </p>
+              )}
+              {layers.some((layer) => layer.type === "Softmax") && (
+                <p className="tip">
+                  Softmax turns class scores into probabilities. With PyTorch’s CrossEntropyLoss, leave it out during training and apply it only for display.
+                </p>
+              )}
+            </section>
+          </div>
         </aside>
       </main>
     ) : activeTab === "diagram" ? (

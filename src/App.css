@@ -18,6 +18,7 @@ h1, h2, p { margin: 0; } h1 { font-size: clamp(22px, 3vw, 31px); margin-top: 5px
   background: rgba(7, 18, 33, .66);
 }
 .sidebar {
+  padding: 25px 22px;
   border-right: 1px solid #21334b;
   position: relative;
   min-width: 0;
@@ -25,16 +26,44 @@ h1, h2, p { margin: 0; } h1 { font-size: clamp(22px, 3vw, 31px); margin-top: 5px
 .inspector {
   border-left: 1px solid #21334b;
   position: relative;
-  align-self: start;
-  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: transform;
+  align-self: stretch;
+  padding: 0;
+  min-width: 0;
+}
+
+.inspector-sticky-content {
+  position: sticky;
+  top: 24px;
+  padding: 25px 22px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #244163 transparent;
+  box-sizing: border-box;
+}
+
+.inspector-sticky-content::-webkit-scrollbar {
+  width: 5px;
+}
+
+.inspector-sticky-content::-webkit-scrollbar-track {
+  background: rgba(6, 16, 30, 0.4);
+}
+
+.inspector-sticky-content::-webkit-scrollbar-thumb {
+  background: #244163;
+  border-radius: 4px;
+}
+
+.inspector-sticky-content::-webkit-scrollbar-thumb:hover {
+  background: #38bdf8;
 }
 
 /* Subtle glowing notch pointing to the active layer */
-.inspector::before {
+.inspector-sticky-content::before {
   content: "";
   position: absolute;
-  left: -2px;
+  left: -1px;
   top: 28px;
   width: 3px;
   height: 38px;
@@ -1946,17 +1975,21 @@ section + section { margin-top: 28px; }.muted { color: #91a3bb; font-size: 13px;
   .workspace { grid-template-columns: var(--sidebar-width, 240px) 1fr; }
   .inspector {
     position: static;
-    transform: none !important;
-    max-height: none;
-    overflow-y: visible;
     grid-column: 1 / -1;
     border-left: 0;
     border-top: 1px solid #21334b;
+    padding: 25px 22px;
+  }
+  .inspector-sticky-content {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+    padding: 0;
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 25px;
   }
-  .inspector::before {
+  .inspector-sticky-content::before {
     display: none;
   }
   .inspector section { margin: 0; }
