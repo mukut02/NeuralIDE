@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import CodeStudio from "./components/CodeStudio.jsx";
 import PaperDiagram from "./components/PaperDiagram.jsx";
 import { MODEL_PRESETS } from "./data/modelPresets.js";
@@ -294,6 +294,104 @@ function App() {
   const [autoSync, setAutoSync] = useState(true);
   const [toast, setToast] = useState(null);
 
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try {
+      const saved = localStorage.getItem("neuralide_sidebar_width");
+      const parsed = parseInt(saved, 10);
+      if (parsed >= 220 && parsed <= 600) return parsed;
+    } catch {
+      // ignore
+    }
+    return 270;
+  });
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const sidebarRef = useRef(null);
+  const isResizingRef = useRef(false);
+
+  useEffect(() => {
+    if (!isResizingSidebar) return;
+
+    const handleMouseMove = (e) => {
+      if (!isResizingRef.current || !sidebarRef.current) return;
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const sidebarRect = sidebarRef.current.getBoundingClientRect();
+      const rawWidth = clientX - sidebarRect.left;
+      const maxWidth = Math.min(550, Math.max(260, window.innerWidth - 450));
+      const clampedWidth = Math.max(220, Math.min(maxWidth, Math.round(rawWidth)));
+      setSidebarWidth(clampedWidth);
+    };
+
+    const handleMouseUp = () => {
+      if (isResizingRef.current) {
+        isResizingRef.current = false;
+        setIsResizingSidebar(false);
+        setSidebarWidth((w) => {
+          try {
+            localStorage.setItem("neuralide_sidebar_width", String(w));
+          } catch {
+            // ignore
+          }
+          return w;
+        });
+      }
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    window.addEventListener("touchmove", handleMouseMove, { passive: false });
+    window.addEventListener("touchend", handleMouseUp);
+
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+      window.removeEventListener("touchmove", handleMouseMove);
+      window.removeEventListener("touchend", handleMouseUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+  }, [isResizingSidebar]);
+
+  const startResizingSidebar = (e) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    setIsResizingSidebar(true);
+  };
+
+  const resetSidebarWidth = () => {
+    setSidebarWidth(270);
+    try {
+      localStorage.setItem("neuralide_sidebar_width", "270");
+    } catch {
+      // ignore
+    }
+    showToast("Sidebar width reset to default (270px)");
+  };
+
+  const handleResizerKeyDown = (e) => {
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      setSidebarWidth((prev) => {
+        const next = Math.max(220, prev - 10);
+        try { localStorage.setItem("neuralide_sidebar_width", String(next)); } catch {}
+        return next;
+      });
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      setSidebarWidth((prev) => {
+        const maxW = Math.min(550, Math.max(260, window.innerWidth - 450));
+        const next = Math.min(maxW, prev + 10);
+        try { localStorage.setItem("neuralide_sidebar_width", String(next)); } catch {}
+        return next;
+      });
+    } else if (e.key === "Home" || e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      resetSidebarWidth();
+    }
+  };
+
   function showToast(message) {
     setToast(message);
     setTimeout(() => {
@@ -511,8 +609,8 @@ function App() {
     </header>
 
     {activeTab === "architecture" ? (
-      <main className="workspace">
-        <aside className="sidebar">
+      <main className="workspace" style={{ "--sidebar-width": `${sidebarWidth}px` }}>
+        <aside className="sidebar" ref={sidebarRef}>
           <section className="preset-card">
             <div className="preset-card-header">
               <p className="panel-label">Pre-Trained Architecture</p>
@@ -612,6 +710,23 @@ function App() {
           <section><p className="panel-label">Layer toolbox</p><p className="muted">Click to add after the selected layer, or drag onto a layer to place it before or after.</p>
             {Object.entries(LAYER_GROUPS).map(([group, types]) => <div className="tool-group" key={group}><span>{group}</span><div>{types.map((type) => <button key={type} draggable className="tool-button" onDragStart={(event) => beginToolDrag(event, type)} onDragEnd={() => setDraggedTool(null)} onClick={() => addLayer(type)}>+ {LAYER_LIBRARY[type].label}</button>)}</div></div>)}
           </section>
+
+          <div
+            className={`sidebar-resizer ${isResizingSidebar ? "is-resizing" : ""}`}
+            role="separator"
+            aria-orientation="vertical"
+            aria-valuenow={sidebarWidth}
+            aria-valuemin={220}
+            aria-valuemax={550}
+            tabIndex={0}
+            title="Drag to resize sidebar (Double-click to reset)"
+            onMouseDown={startResizingSidebar}
+            onTouchStart={startResizingSidebar}
+            onDoubleClick={resetSidebarWidth}
+            onKeyDown={handleResizerKeyDown}
+          >
+            <div className="resizer-handle-pill" />
+          </div>
         </aside>
 
         <section className="canvas">
