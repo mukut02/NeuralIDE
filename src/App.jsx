@@ -888,7 +888,15 @@ function makeCode(layers, dataset, connections, training, usePretrainedWeights =
     else if (layer.type === "AdaptiveAvgPool") { definitions.push(`self.${name} = nn.AdaptiveAvgPool2d((${p.size}, ${p.size}))`); forward.push(`x = self.${name}(x)`); }
     else if (layer.type === "GlobalAvgPool") { definitions.push(`self.${name} = nn.AdaptiveAvgPool2d(1)`); forward.push(`x = torch.flatten(self.${name}(x), 1)`); }
     else if (layer.type === "Flatten") forward.push("x = torch.flatten(x, 1)");
-    else if (["Linear", "Dense", "Bilinear", "ClassifierHead", "ClassificationHead", "RegressionHead"].includes(layer.type)) { definitions.push(`self.${name} = nn.LazyLinear(${p.units})`); forward.push(`x = self.${name}(x)`); }
+    else if (["Linear", "Dense", "Bilinear", "ClassifierHead", "ClassificationHead", "RegressionHead"].includes(layer.type)) {
+      const inFeatures = architecture[index]?.input?.kind === "vector" ? architecture[index].input.n : null;
+      if (inFeatures) {
+        definitions.push(`self.${name} = nn.Linear(${inFeatures}, ${p.units})`);
+      } else {
+        definitions.push(`self.${name} = nn.LazyLinear(${p.units})`);
+      }
+      forward.push(`x = self.${name}(x)`);
+    }
     else if (layer.type === "Dropout") { definitions.push(`self.${name} = nn.Dropout(${p.rate})`); forward.push(`x = self.${name}(x)`); }
     else if (layer.type === "Dropout2D") { definitions.push(`self.${name} = nn.Dropout2d(${p.rate})`); forward.push(`x = self.${name}(x)`); }
     else if (layer.type === "DropPath") { definitions.push(`self.${name} = nn.Dropout(${p.rate})  # DropPath approximated as Dropout`); forward.push(`x = self.${name}(x)`); }

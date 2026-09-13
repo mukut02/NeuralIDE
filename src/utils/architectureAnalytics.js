@@ -437,35 +437,45 @@ export function generateSyntheticFeatureMaps(stepIndex, totalSteps, shape, datas
     const logits = [];
 
     // Target class receives top-1 probability; other classes receive realistic lower distribution
-    for (let i = 0; i < size; i++) {
-      if (isFinal) {
-        if (i === validClass) {
-          logits.push(0.91 + (Math.sin(validClass * 2) * 0.03));
-        } else {
-          // Secondary classes with small plausible confusions
-          const diff = Math.abs(i - validClass);
-          logits.push(Math.max(0.005, 0.05 / (diff + 1) + (Math.sin((i + validClass) * 1.5) * 0.01)));
-        }
-      } else {
-        // Intermediate hidden vector activations modulated by the selected class
-        const activation = Math.sin((i * 1.8 + validClass * 2.4 + stepIndex) * 0.75) * 0.45 + 0.5;
-        logits.push(Math.max(0.04, Math.min(0.96, activation)));
-      }
-    }
-
     if (isFinal) {
-      const sum = logits.reduce((a, b) => a + b, 0);
+      // 1. Synthesize unnormalized logits z_i
+      const rawLogits = [];
+      for (let i = 0; i < size; i++) {
+        if (i === validClass) {
+          // Target ground truth class receives dominant logit
+          rawLogits.push(4.8 + Math.sin(validClass * 2) * 0.25);
+        } else {
+          // Secondary classes with small plausible confusions based on semantic distance
+          const diff = Math.abs(i - validClass);
+          rawLogits.push(Math.max(-1.8, 0.6 / (diff + 1) + Math.sin((i + validClass) * 1.5) * 0.25));
+        }
+      }
+
+      // 2. Exact mathematical Softmax: σ(z)_i = exp(z_i - max(z)) / sum(exp(z_j - max(z)))
+      const maxLogit = Math.max(...rawLogits);
+      const expScores = rawLogits.map((z) => Math.exp(z - maxLogit));
+      const sumExp = expScores.reduce((a, b) => a + b, 0);
+      const softmaxProbs = expScores.map((e) => e / sumExp);
+
       return {
         kind: "vector",
-        values: logits.map((v) => v / sum),
+        values: softmaxProbs,
+        rawLogits,
         targetClass: validClass,
         targetClassLabel: classLabel,
       };
     }
 
+    // For intermediate hidden vectors (Flatten / Dense layers before final output)
+    const hiddenActivations = [];
+    for (let i = 0; i < size; i++) {
+      const activation = Math.sin((i * 1.8 + validClass * 2.4 + stepIndex) * 0.75) * 0.45 + 0.5;
+      hiddenActivations.push(Math.max(0.04, Math.min(0.96, activation)));
+    }
+
     return {
       kind: "vector",
-      values: logits,
+      values: hiddenActivations,
       targetClass: null,
       targetClassLabel: null,
     };

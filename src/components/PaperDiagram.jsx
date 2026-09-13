@@ -892,14 +892,20 @@ export default function PaperDiagram({
                 <span className="heatmap-title">
                   {syntheticActivation?.kind === "image"
                     ? `Simulated Feature Activations (${syntheticActivation.previewChannels} of ${syntheticActivation.totalChannels} channels)`
-                    : "Simulated Prediction Logits & Class Probabilities"}
+                    : syntheticActivation?.targetClass !== null
+                      ? "Prediction Softmax Probabilities (Output Logits)"
+                      : `Dense Feature Vector (${currentStepData.shape?.n || "?"} dimensions)`}
                 </span>
                 <span className="heatmap-class-badge">
                   Active Sample: <strong>{syntheticActivation?.classLabel || dataset.classesList?.[selectedClass] || `Class ${selectedClass}`}</strong>
                 </span>
               </div>
               <span className="heatmap-scale">
-                {syntheticActivation?.kind === "image" ? "Intensity 0.0 → 1.0" : "Softmax Probability"}
+                {syntheticActivation?.kind === "image"
+                  ? "Intensity 0.0 → 1.0"
+                  : syntheticActivation?.targetClass !== null
+                    ? "Softmax Probability (0% → 100%)"
+                    : "Activation Amplitude (0.0 → 1.0)"}
               </span>
             </div>
 
@@ -952,23 +958,29 @@ export default function PaperDiagram({
             ) : syntheticActivation?.kind === "vector" ? (
               <div className="vector-distribution-view">
                 <div className="logits-bars-container">
-                  {syntheticActivation.values.map((prob, idx) => {
+                  {syntheticActivation.values.map((val, idx) => {
                     const isTarget = syntheticActivation.targetClass === idx;
-                    const rawLabel = dataset?.classesList?.[idx] || `${idx}`;
-                    const shortName = rawLabel.includes("-")
-                      ? rawLabel.split("-")[1].trim().slice(0, 5)
-                      : rawLabel.slice(0, 5);
+                    const isSoftmax = syntheticActivation.targetClass !== null;
+                    const rawLabel = isSoftmax
+                      ? (dataset?.classesList?.[idx] || `Class ${idx}`)
+                      : `Feature dim ${idx + 1}`;
+                    const shortName = isSoftmax
+                      ? (rawLabel.includes("-") ? rawLabel.split("-")[1].trim().slice(0, 5) : rawLabel.slice(0, 5))
+                      : `d${idx + 1}`;
+                    const displayPercent = isSoftmax
+                      ? `${(val * 100).toFixed(0)}%`
+                      : val.toFixed(2);
 
                     return (
-                      <div key={idx} className="logit-bar-wrapper" title={`${rawLabel}: ${(prob * 100).toFixed(1)}%`}>
+                      <div key={idx} className="logit-bar-wrapper" title={`${rawLabel}: ${isSoftmax ? (val * 100).toFixed(1) + "%" : val.toFixed(3)}`}>
                         <div className="logit-bar-track">
                           <div
                             className={`logit-bar-fill ${isTarget ? "target-class" : ""}`}
-                            style={{ height: `${Math.round(prob * 100)}%` }}
+                            style={{ height: `${Math.round(val * 100)}%` }}
                           />
                         </div>
                         <span className={`logit-label ${isTarget ? "target-text" : ""}`}>{shortName}</span>
-                        <span className="logit-prob">{(prob * 100).toFixed(0)}%</span>
+                        <span className="logit-prob">{displayPercent}</span>
                       </div>
                     );
                   })}
